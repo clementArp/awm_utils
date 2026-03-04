@@ -9,9 +9,9 @@ Objectif de cette version:
   un log complet disponible via fichier + mode --verbose.
 
 Usage:
-  py deploy_awm_iis_patched_refactored.py
-  py deploy_awm_iis_patched_refactored.py --verbose
-  py deploy_awm_iis_patched_refactored.py --log D:\temp\deploy_awmlog.txt
+  py deploy.py
+  py deploy.py --verbose
+  py deploy.py --log D:\temp\deploy_awmlog.txt
 """
 
 import argparse

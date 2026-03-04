@@ -61,6 +61,7 @@ MYSQL_USER = "root"
 MYSQL_PASSWORD = "arp360arp360"
 MYSQL_HOST = "127.0.0.1"
 MYSQL_PORT = "3306"
+MYSQL_BIN_FALLBACK = r"C:\Program Files\MySQL\MySQL Server 8.0\bin"
 
 # NSSM (services Windows)
 # Exigence: nssm.exe présent sur le disque C: (ou dans PATH). On tente d'abord PATH,
@@ -270,7 +271,7 @@ def check_python39() -> bool:
 
 
 def check_mysql_installed() -> bool:
-    return shutil.which("mysql") is not None
+    return get_mysql_exe() is not None
 
 
 def check_internet_access(host: str = "pypi.org", port: int = 443, timeout: int = 3) -> bool:
@@ -396,6 +397,22 @@ def set_execution_policy_current_user() -> None:
         pass
 
 
+def get_mysql_exe() -> Optional[str]:
+    p = shutil.which("mysql")
+    if p:
+        return p
+    candidate = Path(MYSQL_BIN_FALLBACK) / "mysql.exe"
+    return str(candidate) if candidate.exists() else None
+
+
+def ensure_mysql_in_process_path() -> None:
+    """Ajoute mysql au PATH uniquement pour CE script (pas permanent)."""
+    if shutil.which("mysql"):
+        return
+    if Path(MYSQL_BIN_FALLBACK).exists():
+        os.environ["PATH"] = MYSQL_BIN_FALLBACK + os.pathsep + os.environ.get("PATH", "")
+
+
 def ensure_mysql_db_exists(
     db_name: str,
     host: str = MYSQL_HOST,
@@ -408,8 +425,14 @@ def ensure_mysql_db_exists(
         return False
 
     LOG.info(f"(MySQL) Création si absente: {db_name}")
+
+    mysql = get_mysql_exe()
+    if not mysql:
+        LOG.info("(MySQL) mysql.exe introuvable -> impossible de créer la DB.")
+        return False
+
     cmd = [
-        "mysql",
+        mysql,
         f"-u{user}",
         f"-p{password}",
         f"-h{host}",
@@ -440,8 +463,13 @@ def import_mysql_dump(
             raise RuntimeError(f"(MySQL) Dump non trouvé: {dump_path} -> skip.")
         LOG.info(f"(MySQL) Import dump: {dump_path} -> {db_name}")
 
+        mysql = get_mysql_exe()
+        if not mysql:
+            LOG.info("(MySQL) mysql.exe introuvable -> impossible d'importer le dump.")
+            return False
+
         cmd = [
-            "mysql",
+            mysql,
             f"-u{user}",
             f"-p{password}",
             f"-h{host}",

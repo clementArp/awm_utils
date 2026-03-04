@@ -1,0 +1,28 @@
+
+---------------------
+DÉPLOIEMENT AWM (IIS)
+---------------------
+Log complet: D:\arp\dev\git\awm_deployement\deploy_awm_20260304_101904.log
+
+> py -3.9 -V
+Python 3.9.1
+Prerequis: Python 3.9 OK ? True
+Prerequis: mysql.exe trouvé ? True (indicatif)
+Prerequis: C:\nssm\nssm.exe trouvé ou PATH ? True (C:\nssm\nssm.exe)
+
+> powershell -NoProfile -ExecutionPolicy Bypass -Command [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); $OutputEncoding = [Console]::OutputEncoding; (Get-WindowsOptionalFeature -Online -FeatureName IIS-ApplicationInit).State
+Enabled
+
+> powershell -NoProfile -ExecutionPolicy Bypass -Command [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); $OutputEncoding = [Console]::OutputEncoding; Import-Module WebAdministration; (Get-WebGlobalModule | Where-Object {$_.Name -eq 'httpPlatformHandler'} | Measure-Object).Count
+1
+
+> py -3.9 -c import sys; print(sys.executable)
+C:\Users\cnadaud\AppData\Local\Programs\Python\Python39\python.exe
+
+-----------------------------------
+PRÉREQUIS IIS / httpPlatformHandler
+-----------------------------------
+1) IIS Application Initialization (IIS-ApplicationInit) activé ? True
+2) Module IIS httpPlatformHandler installé ? True
+3) Droits IIS_IUSRS sur Python (dossier: C:\Users\cnadaud\AppData\Local\Programs\Python\Python39) ? True
+4) Accès internet (pypi.org:443) ? True

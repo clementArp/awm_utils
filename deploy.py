@@ -42,7 +42,7 @@ PORT_RECIPE_BASE = 9000
 SITE_SUFFIX_APPS = "_APPS"
 SITE_SUFFIX_RECIPE = "_RECIPE"
 
-WHEEL_HOOSE = "wheelhouse"
+WHEEL_HOUSE = "wheelhouse"
 
 HANDLER_NAME = "AWMHandler"
 HANDLER_MODULE = "httpPlatformHandler"
@@ -370,10 +370,19 @@ def check_prerequisites_or_exit(project_src: Path) -> None:
         sys.exit(1)
 
     if not ok_net:
-        wheelhouse = project_src / WHEEL_HOOSE
+        wheelhouse = project_src / WHEEL_HOUSE
         LOG.info("⚠️ Pas d'accès Internet détecté. Une installation offline via wheelhouse sera proposée.")
         if not wheelhouse.exists() or not wheelhouse.is_dir():
             LOG.info(f"❌ Dossier wheelhouse introuvable: {wheelhouse}")
+            sys.exit(1)
+
+        use_offline = ask_yes_no(
+            "Aucun accès Internet. Continuer l'installation en utilisant wheelhouse ? (y/n)",
+            "y",
+        )
+
+        if not use_offline:
+            LOG.info("Installation annulée par l'utilisateur (mode offline refusé).")
             sys.exit(1)
 
 
@@ -515,7 +524,7 @@ def create_venv_and_install(root: Path, machine_num: int, target_dir: Path) -> N
     if not req.exists():
         raise FileNotFoundError(f"Fichier requirements introuvable: {req}")
 
-    wheelhouse = root / WHEEL_HOOSE
+    wheelhouse = root / WHEEL_HOUSE
     has_internet = check_internet_access()
 
     if has_internet:
@@ -528,13 +537,6 @@ def create_venv_and_install(root: Path, machine_num: int, target_dir: Path) -> N
             raise FileNotFoundError(
                 f"Dossier wheelhouse introuvable: {wheelhouse}\n" "Impossible de poursuivre l'installation offline."
             )
-
-        use_offline = ask_yes_no(
-            "Aucun accès Internet. Continuer l'installation en utilisant wheelhouse ? (y/n)",
-            "y",
-        )
-        if not use_offline:
-            raise RuntimeError("Installation annulée par l'utilisateur (mode offline refusé).")
 
         LOG.info("(Python) Installation offline depuis wheelhouse.")
         run(

@@ -42,6 +42,8 @@ PORT_RECIPE_BASE = 9000
 SITE_SUFFIX_APPS = "_APPS"
 SITE_SUFFIX_RECIPE = "_RECIPE"
 
+WHEEL_HOOSE = "wheelhouse"
+
 HANDLER_NAME = "AWMHandler"
 HANDLER_MODULE = "httpPlatformHandler"
 VIRTUAL_STATIC_NAME = "static"
@@ -262,6 +264,16 @@ def ask(prompt: str, default: Optional[str] = None) -> str:
     return s if s else default
 
 
+def ask_yes_no(prompt: str, default: str = "y") -> bool:
+    while True:
+        answer = ask(prompt, default).strip().lower()
+        if answer in {"y", "yes", "o", "oui"}:
+            return True
+        if answer in {"n", "no", "non"}:
+            return False
+        LOG.info("Réponse invalide. Tape y/n.")
+
+
 def check_python39() -> bool:
     try:
         p = run([PY_LAUNCHER, PY_VERSION_FLAG, "-V"], check=True)
@@ -327,7 +339,7 @@ def check_iis_iusrs_can_access_python39() -> tuple[bool, str]:
         return False, ""
 
 
-def check_prerequisites_or_exit() -> None:
+def check_prerequisites_or_exit(project_src: Path) -> None:
     ok_appinit = check_iis_application_init_enabled()
     ok_httpplatform = check_httpplatformhandler_installed()
     ok_acl, py_dir = check_iis_iusrs_can_access_python39()
@@ -339,26 +351,30 @@ def check_prerequisites_or_exit() -> None:
     LOG.info(f"3) Droits IIS_IUSRS sur Python (dossier: {py_dir or 'N/A'}) ? {ok_acl}")
     LOG.info(f"4) Accès internet (pypi.org:443) ? {ok_net}")
 
-    if ok_appinit and ok_httpplatform and ok_acl and ok_net:
-        return
-
-    LOG.info("\n❌ Pré-requis manquants. Actions à faire :")
     if not ok_appinit:
         LOG.info(
             " - Activer IIS -> World Wide Web Services -> Application Development Features -> Application Initialization"
         )
+        sys.exit(1)
+
     if not ok_httpplatform:
         LOG.info(" - Installer httpPlatformHandler (ex: httpPlatformHandler_amd64.msi)")
+        sys.exit(1)
+
     if not ok_acl:
         LOG.info(" - Donner les droits à IIS sur le dossier Python :")
         LOG.info("   1) Aller dans %localappdata%\\Programs\\Python")
         LOG.info("   2) Sécurité -> Modifier -> sélectionner le niveau le plus haut (USER) puis ajouter IIS_IUSRS")
         if py_dir:
             LOG.info(f"   (dossier python détecté: {py_dir})")
-    if not ok_net:
-        LOG.info(" - Vérifier l'accès internet (nécessaire pour pip install).")
+        sys.exit(1)
 
-    sys.exit(1)
+    if not ok_net:
+        wheelhouse = project_src / WHEEL_HOOSE
+        LOG.info("⚠️ Pas d'accès Internet détecté. Une installation offline via wheelhouse sera proposée.")
+        if not wheelhouse.exists() or not wheelhouse.is_dir():
+            LOG.info(f"❌ Dossier wheelhouse introuvable: {wheelhouse}")
+            sys.exit(1)
 
 
 def validate_machine_num(s: str) -> int:
@@ -498,7 +514,40 @@ def create_venv_and_install(root: Path, machine_num: int, target_dir: Path) -> N
     req = root / REQUIREMENTS_FILE
     if not req.exists():
         raise FileNotFoundError(f"Fichier requirements introuvable: {req}")
-    run([pip, "install", "-r", str(req)], cwd=str(root))
+
+    wheelhouse = root / WHEEL_HOOSE
+    has_internet = check_internet_access()
+
+    if has_internet:
+        LOG.info("(Python) Accès Internet détecté -> installation des dépendances en ligne.")
+        run([pip, "install", "-r", str(req)], cwd=str(root))
+    else:
+        LOG.info("(Python) Aucun accès Internet détecté.")
+
+        if not wheelhouse.exists():
+            raise FileNotFoundError(
+                f"Dossier wheelhouse introuvable: {wheelhouse}\n" "Impossible de poursuivre l'installation offline."
+            )
+
+        use_offline = ask_yes_no(
+            "Aucun accès Internet. Continuer l'installation en utilisant wheelhouse ? (y/n)",
+            "y",
+        )
+        if not use_offline:
+            raise RuntimeError("Installation annulée par l'utilisateur (mode offline refusé).")
+
+        LOG.info("(Python) Installation offline depuis wheelhouse.")
+        run(
+            [
+                pip,
+                "install",
+                "--no-index",
+                f"--find-links={wheelhouse}",
+                "-r",
+                str(req),
+            ],
+            cwd=str(root),
+        )
 
     # django commands
     manage = root / REL_MANAGE_PY
@@ -1084,11 +1133,11 @@ def main(argv: Sequence[str] = ()) -> None:
         LOG.info("❌ C:\\nssm\\nssm.exe introuvable (ou PATH).")
         sys.exit(1)
 
-    check_prerequisites_or_exit()
-
     project_src = Path(ask("1) Chemin du projet AWM (dossier source) :"))
     if not project_src.exists():
         raise FileNotFoundError(project_src)
+
+    check_prerequisites_or_exit(project_src)
 
     machine_str = ask("2) Numéro machine ARP (3 chiffres, ex 105) :")
     machine_num = validate_machine_num(machine_str)

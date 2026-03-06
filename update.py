@@ -31,6 +31,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
+import stat
+
+WHEELHOUSE_DIR = "wheelhouse"
 
 
 # ---------- Utils ----------
@@ -92,7 +95,7 @@ def has_internet(host: str = "pypi.org", port: int = 443, timeout_s: float = 3.0
 
 
 def rel_norm(path: Path) -> str:
-    return str(path).replace("/", "\\").lstrip(".\\")
+    return str(path).replace("/", "\\")
 
 
 def is_excluded(rel: str, excluded_prefixes: Tuple[str, ...]) -> bool:
@@ -110,6 +113,7 @@ EXCLUDED_PREFIXES: Tuple[str, ...] = (
     r"venv",
     r"logs",
     r".env",
+    r"com\main\logger",
     r"web\db\recipes",
     r"web\src\media",
 )
@@ -158,7 +162,32 @@ def sync_tree(src_root: Path, dst_root: Path, excluded_prefixes: Tuple[str, ...]
             src_file = cur_dir_p / f
             dst_file = dst_root / rel_file
             dst_file.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src_file, dst_file)
+
+            try:
+                if dst_file.exists():
+                    try:
+                        os.chmod(dst_file, stat.S_IWRITE)
+                    except OSError:
+                        pass
+
+                    try:
+                        dst_file.unlink()
+                    except PermissionError:
+                        time.sleep(0.2)
+                        try:
+                            os.chmod(dst_file, stat.S_IWRITE)
+                        except OSError:
+                            pass
+                        dst_file.unlink()
+
+                shutil.copy2(src_file, dst_file)
+
+            except PermissionError as e:
+                print(f"⚠️ Impossible de remplacer: {dst_file}")
+                raise PermissionError(
+                    f"Accès refusé lors du remplacement de '{dst_file}'. "
+                    f"Le fichier est probablement verrouillé, en lecture seule, ou protégé."
+                ) from e
 
 
 # ---------- Post update steps ----------
@@ -171,11 +200,59 @@ def venv_python(awm_root: Path) -> Path:
     return py
 
 
-def update_venv_if_possible(awm_root: Path, *, internet_ok: bool) -> None:
-    if not internet_ok:
-        print("⚠️ Pas d'accès internet: la venv ne sera pas mise à jour (pip install ignoré).")
-        return
+def choose_venv_update_mode(src_root: Path, internet_ok: bool) -> str:
+    """
+    Retourne:
+      - 'online'
+      - 'offline-wheelhouse'
+      - 'skip'
+    Peut lever RuntimeError si l'utilisateur annule.
+    """
+    wheelhouse = src_root / WHEELHOUSE_DIR
+    wheelhouse_ok = wheelhouse.exists() and wheelhouse.is_dir()
 
+    print("\n----- VENV / CONNECTIVITÉ -----")
+    print(f"Internet (pypi.org:443) : {'OK' if internet_ok else 'NON'}")
+    print(f"Wheelhouse source       : {'OK' if wheelhouse_ok else 'NON'} ({wheelhouse})")
+
+    if internet_ok:
+        print("✅ La mise à jour de la venv se fera via Internet.")
+        if not ask_yes_no("Continuer avec cette configuration ?", default_yes=True):
+            raise RuntimeError("Opération annulée avant la copie.")
+        return "online"
+
+    print("⚠️ Aucun accès Internet détecté.")
+
+    if wheelhouse_ok:
+        use_wheelhouse = ask_yes_no(
+            f"Utiliser '{WHEELHOUSE_DIR}' du dossier source pour mettre à jour la venv hors ligne ?",
+            default_yes=True,
+        )
+        if use_wheelhouse:
+            if not ask_yes_no("Confirmer et continuer ?", default_yes=True):
+                raise RuntimeError("Opération annulée avant la copie.")
+            return "offline-wheelhouse"
+
+    skip_update = ask_yes_no(
+        "Continuer sans mettre à jour la venv ?",
+        default_yes=False,
+    )
+    if skip_update:
+        if not ask_yes_no("Confirmer et continuer sans mise à jour de la venv ?", default_yes=True):
+            raise RuntimeError("Opération annulée avant la copie.")
+        return "skip"
+
+    raise RuntimeError("Opération annulée avant la copie.")
+
+
+def update_venv_if_possible(awm_root: Path, *, mode: str) -> bool:
+    """
+    mode:
+      - 'online'
+      - 'offline-wheelhouse'
+      - 'skip'
+    Retourne True si update faite, False si ignorée.
+    """
     req = awm_root / "requirement.txt"
     if not req.exists():
         req2 = awm_root / "requirements.txt"
@@ -183,11 +260,42 @@ def update_venv_if_possible(awm_root: Path, *, internet_ok: bool) -> None:
             req = req2
         else:
             print("⚠️ requirement.txt / requirements.txt introuvable: mise à jour pip ignorée.")
-            return
+            return False
 
     py = venv_python(awm_root)
-    print(f"⬆️  Mise à jour venv via: {req.name}")
-    run([str(py), "-m", "pip", "install", "-r", str(req)], cwd=awm_root, check=True)
+
+    if mode == "online":
+        print(f"⬆️  Mise à jour venv via Internet avec: {req.name}")
+        run([str(py), "-m", "pip", "install", "-r", str(req)], cwd=awm_root, check=True)
+        return True
+
+    if mode == "offline-wheelhouse":
+        wheelhouse = awm_root / WHEELHOUSE_DIR
+        if not wheelhouse.exists() or not wheelhouse.is_dir():
+            raise RuntimeError(f"Dossier '{WHEELHOUSE_DIR}' introuvable après copie: {wheelhouse}")
+
+        print(f"⬆️  Mise à jour venv hors ligne via: {wheelhouse}")
+        run(
+            [
+                str(py),
+                "-m",
+                "pip",
+                "install",
+                "--no-index",
+                f"--find-links={wheelhouse}",
+                "-r",
+                str(req),
+            ],
+            cwd=awm_root,
+            check=True,
+        )
+        return True
+
+    if mode == "skip":
+        print("⚠️ Mise à jour de la venv ignorée.")
+        return False
+
+    raise RuntimeError(f"Mode de mise à jour inconnu: {mode}")
 
 
 def django_manage(awm_root: Path, args: Sequence[str]) -> None:
@@ -202,7 +310,6 @@ def django_manage(awm_root: Path, args: Sequence[str]) -> None:
 
 
 def main() -> int:
-
     print("====================================")
     print("   AWM - Update d'un projet existant")
     print("====================================\n")
@@ -211,27 +318,28 @@ def main() -> int:
     dst = ask_path("Chemin du dossier AWM existant (cible) : ")
 
     internet_ok = has_internet()
-    print(f"\nInternet (pypi.org:443) : {'OK' if internet_ok else 'NON'}")
 
-    if not internet_ok:
-        cont = ask_yes_no(
-            "Pas de connexion internet. Les librairies de la venv ne pourront pas être mises à jour. Continuer ?",
-            default_yes=False,
-        )
-        if not cont:
-            print("⛔ Annulé.")
-            return 1
+    try:
+        venv_update_mode = choose_venv_update_mode(src, internet_ok)
+    except RuntimeError as e:
+        print(f"⛔ {e}")
+        return 1
 
     print("\n----- SYNCHRO FICHIERS -----")
     print("⚠️  Exclusions (non modifiés) :")
     for ex in EXCLUDED_PREFIXES:
         print(f" - {ex}")
+
+    if not ask_yes_no("Lancer la copie / mise à jour des fichiers ?", default_yes=True):
+        print("⛔ Opération annulée avant la copie.")
+        return 1
+
     print("\n📁 Copie / mise à jour en cours...")
     sync_tree(src, dst)
     print("✅ Fichiers mis à jour (hors exclusions).")
 
     print("\n----- POST-UPDATE -----")
-    update_venv_if_possible(dst, internet_ok=internet_ok)
+    update_venv_if_possible(dst, mode=venv_update_mode)
 
     print("🧩 Django: makemigrations")
     django_manage(dst, ["makemigrations"])

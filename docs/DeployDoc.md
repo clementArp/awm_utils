@@ -170,6 +170,100 @@ RECIPE : http://localhost:9000 + <ID>/
 
 ---
 
+Je te propose d’ajouter une petite section **après "Vérifier les services Windows"** pour expliquer la tâche planifiée. Voici un texte cohérent avec le style actuel de ta documentation.
+
+---
+
+# Tâche planifiée de nettoyage des logs
+
+Une tâche planifiée Windows est automatiquement créée lors du déploiement afin de **nettoyer les anciens logs du projet**.
+
+Cette tâche :
+
+- parcourt le dossier :
+
+```
+C:\AWM\logs
+```
+
+- ainsi que **tous ses sous-dossiers** (ex : `IIS_APPS\W3SVC*`)
+- supprime tous les fichiers **plus vieux que 14 jours**
+
+---
+
+## Nom de la tâche
+
+La tâche créée suit le format :
+
+```
+AWM_LogCleanup_<ID_MACHINE>
+```
+
+Exemple pour la machine **ARP301** :
+
+```
+AWM_LogCleanup_301
+```
+
+---
+
+## Planification
+
+La tâche est configurée pour s’exécuter :
+
+```
+Tous les jours à 12:00
+```
+
+Elle exécute le script :
+
+```
+C:\AWM\cleanup_logs.ps1
+```
+
+---
+
+## Vérifier dans le planificateur de tâches
+
+1. Ouvrir **Planificateur de tâches** (`taskschd.msc`)
+2. Aller dans :
+
+```
+Task Scheduler Library
+```
+
+3. Rechercher la tâche :
+
+```
+AWM_LogCleanup_<ID_MACHINE>
+```
+
+4. Vérifier que l’état est :
+
+```
+Ready
+```
+
+---
+
+## Vérifier via ligne de commande
+
+Il est également possible de vérifier la présence de la tâche avec :
+
+```bash
+schtasks /query | findstr AWM_LogCleanup
+```
+
+---
+
+## Test manuel
+
+Le script peut être exécuté manuellement avec :
+
+```bash
+powershell -ExecutionPolicy Bypass -File C:\AWM\cleanup_logs.ps1
+```
+
 # 🛠 Dépannage
 
 Vérifier :

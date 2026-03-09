@@ -113,7 +113,7 @@ EXCLUDED_PREFIXES: Tuple[str, ...] = (
     r"venv",
     r"logs",
     r".env",
-    r"com\main\logger",
+    r"cleanup_logs.ps1",
     r"web\db\recipes",
     r"web\src\media",
 )

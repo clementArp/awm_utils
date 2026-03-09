@@ -643,6 +643,61 @@ def patch_web_config_paths(root: Path, chosen_root: Path) -> None:
     LOG.info(f"(web.config) Patch OK : '{old}' -> '{new}'")
 
 
+def patch_cleanup_script_path(root: Path, chosen_root: Path) -> None:
+    r"""
+    Remplace les occurrences de C:\AWM dans le script de nettoyage des logs
+    par le chemin réellement choisi.
+    """
+    cleanup_script = root / "cleanup_logs.ps1"
+    if not cleanup_script.exists():
+        LOG.info("(cleanup_logs.ps1) Non trouvé -> skip.")
+        return
+
+    old = r"C:\AWM"
+    new = str(chosen_root)
+
+    content = cleanup_script.read_text(encoding="utf-8", errors="ignore")
+    if old not in content:
+        LOG.info(r"(cleanup_logs.ps1) Aucun 'C:\AWM' trouvé -> rien à patcher.")
+        return
+
+    cleanup_script.write_text(content.replace(old, new), encoding="utf-8")
+    LOG.info(f"(cleanup_logs.ps1) Patch OK : '{old}' -> '{new}'")
+
+
+def create_log_cleanup_scheduled_task(root: Path, machine_num: int) -> None:
+    """
+    Crée (ou remplace) une tâche planifiée Windows exécutée tous les jours à 12:00
+    pour nettoyer les logs IIS et leurs sous-dossiers vieux de plus de 14 jours.
+    """
+    cleanup_script = root / "cleanup_logs.ps1"
+    if not cleanup_script.exists():
+        raise FileNotFoundError(f"Script de nettoyage introuvable: {cleanup_script}")
+
+    task_name = f"AWM_LogCleanup_{machine_num:03d}"
+    task_cmd = f'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{cleanup_script}"'
+
+    run(
+        [
+            "schtasks",
+            "/Create",
+            "/TN",
+            task_name,
+            "/SC",
+            "DAILY",
+            "/ST",
+            "12:00",
+            "/TR",
+            task_cmd,
+            "/RU",
+            "SYSTEM",
+            "/F",
+        ],
+        check=True,
+    )
+    LOG.info(f"(Tâche planifiée) OK : {task_name} -> tous les jours à 12:00")
+
+
 def configure_recipe_languages(root: Path) -> None:
     """
     Demande à l'utilisateur les langues à utiliser dans les recettes,
@@ -1149,6 +1204,7 @@ def main(argv: Sequence[str] = ()) -> None:
     copy_project(project_src, target_dir)
 
     patch_web_config_paths(target_dir, target_dir)
+    patch_cleanup_script_path(target_dir, target_dir)
     configure_recipe_languages(target_dir)
     update_env_after_copy(target_dir, machine_num)
 
@@ -1159,6 +1215,7 @@ def main(argv: Sequence[str] = ()) -> None:
     if do_services.lower() == "y":
         create_com_services(target_dir)
 
+    create_log_cleanup_scheduled_task(target_dir, machine_num)
     configure_iis_sites(target_dir, machine_num)
 
     LOG.section("FIN")
